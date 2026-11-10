@@ -12,6 +12,7 @@ app_dir=isdev26team4
 
 <!-- COLLABORATORS: START -->
 - 5urq
+- e1b24027
 - Kagu-Cho
 - miku3448
 <!-- COLLABORATORS: END -->
