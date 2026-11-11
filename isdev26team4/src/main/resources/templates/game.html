@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="UTF-8">
+  <title>大学すごろく盤面 - Team4</title>
+  <link rel="stylesheet" th:href="@{/css/game.css}">
+</head>
+<body>
+  <header class="game-header">
+    <h1>大学すごろく</h1>
+    <div class="turn-banner" id="turn-info">
+      現在のターン: <span class="turn-player-name" th:text="${currentTurnPlayer.name}">プレイヤー1</span> の手番
+    </div>
+  </header>
+
+  <main class="game-container">
+    <section class="players-panel">
+      <h2>参加者（駒情報）</h2>
+      <ul class="player-list">
+        <li th:each="player : ${players}" th:classappend="${player.isTurn} ? 'active-player' : ''">
+          <span class="player-badge" th:style="'background-color: ' + ${player.color}" th:text="${player.id}">1</span>
+          <span class="player-name" th:text="${player.name}">プレイヤー1</span>
+          <span class="player-pos">現在位置: <strong th:text="${player.currentSquareId}">1</strong> マス目</span>
+          <span class="player-turn-tag" th:if="${player.isTurn}">[手番中]</span>
+        </li>
+      </ul>
+    </section>
+
+    <section class="board-panel">
+      <div class="board-panel-header">
+        <h2>大学キャンパスマップ (全 <span th:text="${#lists.size(squares)}">100</span> マス)</h2>
+      </div>
+
+      <!-- 盤面ステージ（背景画像を設定可能） -->
+      <div class="board-stage" id="board-stage">
+        <!-- マスとマスをつなぐルート線（SVG） -->
+        <svg class="board-track-svg" viewBox="0 0 1200 850" preserveAspectRatio="none">
+          <!-- 線の縁取り（外枠） -->
+          <polyline th:attr="points=${trackPoints}" class="track-line-outer" />
+          <!-- 線の本体（路面） -->
+          <polyline th:attr="points=${trackPoints}" class="track-line-inner" />
+        </svg>
+
+        <!-- マスノード一覧（x, y 座標に絶対配置） -->
+        <div th:each="square : ${squares}"
+             class="square-node"
+             th:classappend="'type-' + ${#strings.toLowerCase(square.type)}"
+             th:style="'left: ' + ${square.x} + 'px; top: ' + ${square.y} + 'px;'"
+             th:attr="data-square-id=${square.id}">
+          <div class="square-id" th:text="${square.id}">1</div>
+          <div class="square-name" th:text="${square.name}">マス名</div>
+
+          <!-- マス上にいる駒 -->
+          <div class="pieces-spot">
+            <span th:each="player : ${players}"
+                  th:if="${player.currentSquareId == square.id}"
+                  class="piece"
+                  th:style="'background-color: ' + ${player.color}"
+                  th:title="${player.name}"
+                  th:text="${player.id}">1</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
