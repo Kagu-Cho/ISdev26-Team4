@@ -17,6 +17,7 @@ contains_heading() {
 section_has_content() {
   local file="$1" heading="$2"
   awk -v heading="## ${heading}" '
+    { sub(/\r$/, "") }
     $0 == heading { in_section = 1; next }
     in_section && /^## / { exit }
     in_section && $0 ~ /[^[:space:]]/ { found = 1 }
@@ -29,7 +30,7 @@ validate_sections() {
   local -n headings="$headings_name" required="$required_name"
   local heading count
   for heading in "${headings[@]}"; do
-    count="$(awk -v heading="## ${heading}" '$0 == heading { count++ } END { print count + 0 }' "$file")"
+    count="$(awk -v heading="## ${heading}" '{ sub(/\r$/, "") } $0 == heading { count++ } END { print count + 0 }' "$file")"
     [[ "$count" -eq 1 ]] || { echo "エラー: 見出し『## ${heading}』は本文内に1回だけ必要です（現在: ${count}回）。" >&2; return 1; }
     if contains_heading "$heading" "${required[@]}"; then
       section_has_content "$file" "$heading" || { echo "エラー: 必須項目『## ${heading}』の本文を記入してください。" >&2; return 1; }
