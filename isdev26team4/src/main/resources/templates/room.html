@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="ja" xmlns:th="http://www.thymeleaf.org">
+
+<head>
+  <meta charset="UTF-8">
+  <title th:text="${room.roomName}">Room</title>
+</head>
+
+<body>
+  <main>
+    <h1 th:text="${room.roomName}">Room(1)</h1>
+    <p>参加人数: <span th:text="${room.participantCount}">0</span>人</p>
+    <p>空席: <span th:text="${room.vacancyCount}">4</span>席</p>
+  </main>
+</body>
+
+</html>
