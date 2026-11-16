@@ -55,9 +55,10 @@ class MonthlyActionServiceTest {
   @Test
   void 所持金がちょうど部費なら入部できる() {
     StudentStatus before = new StudentStatus(50, 0, ANNUAL_CIRCLE_FEE, false);
-    StudentStatus after = service.applyMonthlyAction(before, MonthlyAction.CIRCLE).status();
-    assertTrue(after.circleMember());
-    assertEquals(0, after.money());
+    MonthlyResult result = service.applyMonthlyAction(before, MonthlyAction.CIRCLE);
+    assertFalse(result.circleRejected());
+    assertEquals(new StudentStatus(50 - FORGET_LOSS, CIRCLE_CONNECTION_GAIN, 0, true),
+        result.status());
   }
 
   // AC2 失敗例
