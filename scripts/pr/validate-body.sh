@@ -46,7 +46,6 @@ validate_pr_body "$BODY_FILE"
 
 if [[ "$CHECK_RELATED_ISSUES" == true ]]; then
   RELATED_SECTION="$(awk '
-    { sub(/\r$/, "") }
     $0 == "## 関連Issue" { in_section = 1; next }
     in_section && /^## / { exit }
     in_section { print }
