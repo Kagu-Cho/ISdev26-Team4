@@ -54,6 +54,7 @@
       "hasReachedGoal": false,
       "firstGoalMonth": 0,
       "graduationRank": 0,
+      "worst": false,
       "lastAssessmentMonth": 0,
       "assessmentResults": [
         { "subjectNumber": 1, "credits": 2, "result": "PENDING" }
@@ -70,6 +71,7 @@
 - `hasReachedGoal` はマス100への初回到達後にtrueとなり、現在位置にかかわらず卒業判定対象であることを表す。
 - `firstGoalMonth` は初回到達月で、未到達は0とする。
 - `graduationRank` は卒業順位で、未卒業は0、卒業後は変更しない。
+- `worst` は3人以上の卒業でゲーム終了したとき、残りの未卒業者にだけtrueを設定する。通常はfalse。
 - `assessmentResults` は直近半期の科目別結果を保持する。1科目の合格は2単位を表す。
 - `GameState` の入力値をクライアントが直接変更する更新APIは提供しない。
 
@@ -114,7 +116,7 @@
 - 責任: `version` 条件付き更新を行い、参加順を確定する。4人未満の場合は空席をCPU参加者で埋め、CPUにもPlayerNumberを割り当ててから `PLAYING` に遷移する。開始と参加が競合した場合は先にversion更新を成功させた処理だけが成功し、後続処理は `409 Conflict` とする。開始後は参加者を追加できない。
 - 応答: `200 OK` と開始後の `GameState`。
 
-CPU参加者の `participantId` はサーバー生成、`cpu` はtrue、表示名はサーバーが定めたCPU名とする。CPU参加者を人間の認証セッションへ紐付けず、CPU手番はゲーム進行サービスだけが実行する。
+CPU参加者の `participantId` はサーバー生成、`cpu` はtrue、表示名はサーバーが定めたCPU名とする。CPU参加者を人間の認証セッションへ紐付けず、CPU手番はゲーム進行サービスだけが実行する。CPUの行動選択は現段階では3種類から一様ランダムに選び、後続Issueで選択処理だけ差し替えられる。
 
 ### 4.4 状態取得
 
@@ -152,7 +154,7 @@ CPU参加者の `participantId` はサーバー生成、`cpu` はtrue、表示�
   "movedFrom": 1,
   "movedTo": 2,
   "landingEvent": {
-    "type": "NONE|交流",
+    "type": "NONE|交流|GOAL",
     "succeeded": false,
     "connectionsChange": 0
   },
@@ -174,7 +176,7 @@ CPU手番はゲーム進行サービスが内部コマンドとして同じ処�
 
 人間またはCPUの処理後に次の手番がCPUなら、ゲーム進行サービスは次の人間の手番または `FINISHED` になるまでCPU手番を連続実行する。CPU処理中に人間から月次APIを受け付けず、処理完了後の最新 `GameState` を取得できる。
 
-留年中の参加者はマス91〜100の周回区間を移動する。`movedTo` は周回後の最終マスを返し、マス100を越えてマス91へ戻った場合も `rolledNumber` は実際の出目を返す。交流マスに到着した場合は `landingEvent.type` を `交流` として結果を返す。
+留年中の参加者はマス91〜100の周回区間を移動する。`movedTo` は周回後の最終マスを返し、マス100を越えてマス91へ戻った場合も `rolledNumber` は実際の出目を返す。周回区間には交流マスを置かないため、留年中の交流結果は返さない。マス100へ到着した場合は `landingEvent.type` を `GOAL` として返し、`hasReachedGoal` を更新する。通常在籍時にマス100へ到達した場合も、それ以上移動しない。
 
 ### 4.6 半期判定
 
@@ -183,7 +185,7 @@ CPU手番はゲーム進行サービスが内部コマンドとして同じ処�
 - 権限: ゲーム進行サービスのみ。画面利用者から直接呼び出せない。
 - 画面: 直接の操作なし。月次処理が半期末に到達したとき自動実行する。
 - 入力: `version`、`requestId`。
-- 責任: 8科目の過去問入手、科目別合否、`hasReachedGoal=true` の参加者の卒業・留年判定を1回だけ行う。現在位置がマス100であることは追加条件にしない。
+- 責任: 8科目の過去問入手、科目別合否、`hasReachedGoal=true` の参加者の卒業・留年判定を1回だけ行う。現在位置がマス100であることは追加条件にしない。判定後に卒業者が3人以上になった場合は、残りの未卒業者に `worst=true` を設定し、ゲーム状態を `FINISHED`、`currentPlayerNumber` を0にする。
 - 応答: `200 OK` と判定後の `GameState`、科目別結果、判定済み月。
 - `lastAssessmentMonth` が同じ月の再要求は、保存済みの判定結果を返して単位を再加算しない。
 - 半期判定は、その月の全未卒業参加者の手番と到着イベントが完了した後にゲーム進行サービスが呼び出す。画面利用者は直接呼び出さない。
@@ -194,8 +196,8 @@ CPU手番はゲーム進行サービスが内部コマンドとして同じ処�
 
 - 権限: そのゲームの参加者、または開始権限者。
 - 画面: 全参加者の卒業状態が確定した後の「結果」画面。
-- 責任: 参加者ごとの表示名、単位、留年回数、卒業状態、`graduationRank` を返す。順位の計算や状態変更は行わない。
-- 応答: `200 OK`。全員の状態が確定していない場合は `409 Conflict`。全員卒業済みで `FINISHED` になった後は、結果取得を許可する。
+- 責任: 参加者ごとの表示名、単位、留年判定回数、卒業状態、`graduationRank`、`worst` を返す。順位の計算や状態変更は行わない。
+- 応答: `200 OK`。ゲーム状態が `FINISHED` でない場合は `409 Conflict`。3人以上の卒業者と、必要な場合は未卒業のワースト1人を返す。
 
 ## 5. 担当境界
 
@@ -215,7 +217,7 @@ CPU手番はゲーム進行サービスが内部コマンドとして同じ処�
 | 論理データ | 必須項目 |
 | --- | --- |
 | 試合状態 | `gameId`、`status`、`month`、`currentPlayerNumber`、`turnOrder`、`version` |
-| 参加者状態 | `participantId`、`playerNumber`、`squareId`、`credits`、`money`、`academic`、`connections`、`cpu`、`circleMember`、`enrollmentStatus`、`repeatYears`、`hasReachedGoal`、`firstGoalMonth`、`graduationRank`、`lastAssessmentMonth` |
+| 参加者状態 | `participantId`、`playerNumber`、`squareId`、`credits`、`money`、`academic`、`connections`、`cpu`、`circleMember`、`enrollmentStatus`、`repeatYears`、`hasReachedGoal`、`firstGoalMonth`、`graduationRank`、`worst`、`lastAssessmentMonth` |
 | 半期結果 | `gameId`、`participantId`、判定月、科目番号、`AssessmentResult`、獲得単位 |
 | 冪等性記録 | `requestId`、認証利用者、エンドポイント、リクエスト内容の指紋、HTTPステータス、レスポンス本文、作成日時 |
 
