@@ -14,6 +14,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -29,6 +30,7 @@ import oit.is.team7.isdev26team4.result.GraduationService.StudentStatus;
 import oit.is.team7.isdev26team4.result.ResultController.*;
 
 @WebMvcTest(ResultController.class)
+@DisplayName("Issue #13 試合結果API・結果画面")
 class ResultControllerTest {
   private static final UUID GAME = UUID.fromString("00000000-0000-0000-0000-000000000001");
   private static final UUID OTHER = UUID.fromString("00000000-0000-0000-0000-000000000002");
@@ -59,6 +61,7 @@ class ResultControllerTest {
   }
 
   @Test
+  @DisplayName("AC1・AC2 人間とCPUの保存済み順位・結果をJSONで返す")
   void returnsSavedResultsWithoutLeakingAccessInformation() throws Exception {
     mockMvc.perform(request(API).accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk()).andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
@@ -82,6 +85,7 @@ class ResultControllerTest {
   }
 
   @Test
+  @DisplayName("AC1 HTMLの順位・名前・単位・留年回数を改行コードに依存せず確認する")
   void rendersSameSavedResultsInActualTemplate() throws Exception {
     String html = mockMvc.perform(request(PAGE))
         .andExpect(status().isOk()).andExpect(view().name("result"))
@@ -91,13 +95,15 @@ class ResultControllerTest {
         .andExpect(content().string(containsString("<td>124</td>")))
         .andReturn().getResponse().getContentAsString();
     assertTrue(html.indexOf("CPU1") < html.indexOf("学生A"));
-    assertTrue(html.contains("<td>2</td>\n          <td>学生A</td>"));
-    assertTrue(html.contains("<td>126</td>\n          <td>1</td>"));
+    String compact = html.replaceAll(">\\s+<", "><");
+    assertTrue(compact.contains("<td>2</td><td>学生A</td>"));
+    assertTrue(compact.contains("<td>126</td><td>1</td>"));
     mockMvc.perform(request("/result").param("gameId", GAME.toString()))
         .andExpect(status().isOk()).andExpect(model().attribute("completed", true));
   }
 
   @Test
+  @DisplayName("AC2 4人の結果を保存済み順位で表示し独自に再採番しない")
   void includesFourPlayersAndDoesNotRecalculatePersistedRanks() throws Exception {
     when(source.find(GAME)).thenReturn(Optional.of(state(GameStatus.FINISHED, List.of(
         graduate(1, "人間1", false, 124, 2, 4), graduate(2, "CPU1", true, 124, 1, 2),
@@ -106,6 +112,82 @@ class ResultControllerTest {
         .andExpect(jsonPath("$.players", hasSize(4)))
         .andExpect(jsonPath("$.players[*].graduationRank", contains(1, 2, 3, 4)))
         .andExpect(jsonPath("$.players[*].displayName", contains("CPU2", "CPU1", "人間2", "人間1")));
+  }
+
+  private GameResultState threeGraduatesAndOneUnfinished(boolean cpu, EnrollmentStatus enrollment) {
+    ParticipantResult worst = new ParticipantResult(new UUID(1, 4), 4, "最後の参加者", cpu,
+        new StudentStatus(120, 2, enrollment, 0, 4));
+    return state(GameStatus.FINISHED, List.of(worst,
+        graduate(1, "卒業1", false, 124, 0, 1), graduate(3, "卒業3", true, 126, 1, 3),
+        graduate(2, "卒業2", false, 128, 1, 2)));
+  }
+
+  @Test
+  @DisplayName("AC2 3人卒業後の未卒業者を人間・CPUともワーストで表示し状態は変更しない")
+  void showsUnfinishedHumanOrCpuAsWorstWithoutGraduatingThem() throws Exception {
+    for (boolean cpu : new boolean[] {false, true}) {
+      for (EnrollmentStatus enrollment : List.of(EnrollmentStatus.ENROLLED, EnrollmentStatus.REMEDIAL)) {
+        GameResultState saved = threeGraduatesAndOneUnfinished(cpu, enrollment);
+        when(source.find(GAME)).thenReturn(Optional.of(saved));
+        mockMvc.perform(request(API)).andExpect(status().isOk())
+            .andExpect(jsonPath("$.players", hasSize(4)))
+            .andExpect(jsonPath("$.players[*].resultRank", contains(1, 2, 3, 4)))
+            .andExpect(jsonPath("$.players[3].displayName").value("最後の参加者"))
+            .andExpect(jsonPath("$.players[3].cpu").value(cpu))
+            .andExpect(jsonPath("$.players[3].worst").value(true))
+            .andExpect(jsonPath("$.players[3].graduationRank").value(0))
+            .andExpect(jsonPath("$.players[3].enrollmentStatus").value(enrollment.name()))
+            .andExpect(jsonPath("$.players[3].credits").value(120))
+            .andExpect(jsonPath("$.players[3].repeatYears").value(2));
+        String html = mockMvc.perform(request(PAGE)).andExpect(status().isOk())
+            .andExpect(content().string(containsString("4（ワースト）")))
+            .andExpect(content().string(containsString("<td>未卒業</td>")))
+            .andReturn().getResponse().getContentAsString();
+        assertTrue(html.indexOf("卒業3") < html.indexOf("最後の参加者"));
+        assertEquals(enrollment, saved.players().get(0).status().enrollment());
+        assertEquals(0, saved.players().get(0).status().graduationRank());
+        assertEquals(GameStatus.FINISHED, saved.status());
+      }
+    }
+  }
+
+  @Test
+  @DisplayName("3人卒業でも保存状態がPLAYINGならGETで終了状態に変更しない")
+  void doesNotFinishPlayingGameInReadEndpoint() throws Exception {
+    GameResultState finished = threeGraduatesAndOneUnfinished(false, EnrollmentStatus.REMEDIAL);
+    GameResultState playing = state(GameStatus.PLAYING, finished.players());
+    when(source.find(GAME)).thenReturn(Optional.of(playing));
+    mockMvc.perform(request(API)).andExpect(status().isConflict());
+    mockMvc.perform(request(PAGE)).andExpect(status().isConflict());
+    assertEquals(GameStatus.PLAYING, playing.status());
+  }
+
+  @Test
+  @DisplayName("卒業者が2人以下の4人試合では残りをワーストとせず未確定にする")
+  void doesNotPublishTwoGraduatesAndTwoUnfinishedPlayers() throws Exception {
+    ParticipantResult third = new ParticipantResult(new UUID(1, 3), 3, "未卒業3", false,
+        new StudentStatus(120, 0, EnrollmentStatus.ENROLLED, 0, 4));
+    ParticipantResult fourth = new ParticipantResult(new UUID(1, 4), 4, "未卒業4", true,
+        new StudentStatus(120, 1, EnrollmentStatus.REMEDIAL, 0, 4));
+    when(source.find(GAME)).thenReturn(Optional.of(state(GameStatus.FINISHED, List.of(
+        graduate(1, "卒業1", false, 124, 0, 1), graduate(2, "卒業2", true, 126, 0, 2), third, fourth))));
+    mockMvc.perform(request(API)).andExpect(status().isConflict());
+    mockMvc.perform(request(PAGE)).andExpect(status().isConflict())
+        .andExpect(content().string(not(containsString("<table"))));
+  }
+
+  @Test
+  @DisplayName("AC2 保存済み順位の重複・欠番を勝手に補正せず409を返す")
+  void rejectsDuplicateOrMissingRanksWithoutReorderingWinners() throws Exception {
+    for (int secondRank : new int[] {1, 3}) {
+      GameResultState saved = state(GameStatus.FINISHED, List.of(
+          graduate(1, "学生A", false, 124, 0, 1), graduate(2, "CPU1", true, 126, 0, secondRank)));
+      when(source.find(GAME)).thenReturn(Optional.of(saved));
+      mockMvc.perform(request(API)).andExpect(status().isConflict());
+      mockMvc.perform(request(PAGE)).andExpect(status().isConflict())
+          .andExpect(content().string(not(containsString("<table"))));
+      assertEquals(secondRank, saved.players().get(1).status().graduationRank());
+    }
   }
 
   @Test

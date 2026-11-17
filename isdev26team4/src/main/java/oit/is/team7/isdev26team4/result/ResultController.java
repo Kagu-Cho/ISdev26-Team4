@@ -70,8 +70,10 @@ public class ResultController {
     }
   }
 
+  /** graduationRankは保存値。未卒業ワーストのresultRankだけ表示用に4とする。 */
   public record ResultRow(UUID participantId, int playerNumber, String displayName, boolean cpu,
-      int credits, int repeatYears, EnrollmentStatus enrollmentStatus, int graduationRank) {}
+      int credits, int repeatYears, EnrollmentStatus enrollmentStatus, int graduationRank,
+      int resultRank, boolean worst) {}
 
   public record ResultResponse(UUID gameId, GameStatus status, List<ResultRow> players) {
     public ResultResponse { players = List.copyOf(players); }
@@ -132,16 +134,30 @@ public class ResultController {
   }
 
   private boolean completed(GameResultState state) {
-    return state.status() == GameStatus.FINISHED && !state.players().isEmpty()
-        && state.players().stream().allMatch(p -> p.status().enrollment() == EnrollmentStatus.GRADUATED);
+    if (state.status() != GameStatus.FINISHED || state.players().isEmpty()) {
+      return false;
+    }
+    List<Integer> ranks = state.players().stream()
+        .filter(p -> p.status().enrollment() == EnrollmentStatus.GRADUATED)
+        .map(p -> p.status().graduationRank()).sorted().toList();
+    // 保存済み順位に重複・欠番がある場合は結果未確定。GETでは補正しない。
+    for (int index = 0; index < ranks.size(); index++) {
+      if (ranks.get(index) != index + 1) { return false; }
+    }
+    // 4人中3人卒業で残り1人を未卒業ワーストとして確定できる。
+    // FINISHEDへの状態更新・卒業順位の採番は#12から呼ぶ判定/保存処理の責任。
+    return ranks.size() == state.players().size()
+        || (state.players().size() == 4 && ranks.size() == 3);
   }
 
   private List<ResultRow> rows(GameResultState state) {
-    // 保存済み順位を表示順に使うだけで、同順位の解消や順位の再計算はしない。
+    // 卒業順位を再計算せず、未卒業ワーストを最後に表示する。
     return state.players().stream()
-        .sorted(Comparator.comparingInt(p -> p.status().graduationRank()))
         .map(p -> new ResultRow(p.participantId(), p.playerNumber(), p.displayName(), p.cpu(),
             p.status().credits(), p.status().repeatYears(), p.status().enrollment(),
-            p.status().graduationRank())).toList();
+            p.status().graduationRank(),
+            p.status().enrollment() == EnrollmentStatus.GRADUATED ? p.status().graduationRank() : 4,
+            p.status().enrollment() != EnrollmentStatus.GRADUATED))
+        .sorted(Comparator.comparingInt(ResultRow::resultRank)).toList();
   }
 }

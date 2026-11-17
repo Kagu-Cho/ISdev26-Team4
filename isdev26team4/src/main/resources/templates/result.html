@@ -12,19 +12,20 @@
       <input id="gameId" name="gameId" type="text" required>
       <button type="submit">結果を表示</button>
     </form>
-    <p th:if="${!selectGame and !completed}">結果未確定です。全員の卒業後に結果を表示します。</p>
+    <p th:if="${!selectGame and !completed}">結果未確定です。試合終了後に結果を表示します。</p>
     <table th:if="${completed}">
       <caption>卒業順位と参加者の結果</caption>
       <thead>
-        <tr><th scope="col">順位</th><th scope="col">名前</th><th scope="col">参加者種別</th><th scope="col">単位数</th><th scope="col">留年回数</th></tr>
+        <tr><th scope="col">順位</th><th scope="col">名前</th><th scope="col">参加者種別</th><th scope="col">単位数</th><th scope="col">留年回数</th><th scope="col">卒業状態</th></tr>
       </thead>
       <tbody>
         <tr th:each="participant : ${results}">
-          <td th:text="${participant.graduationRank}">1</td>
+          <td th:text="${participant.worst} ? '4（ワースト）' : ${participant.resultRank}">1</td>
           <td th:text="${participant.displayName}">参加者</td>
           <td th:text="${participant.cpu} ? 'CPU' : '人間'">人間</td>
           <td th:text="${participant.credits}">124</td>
           <td th:text="${participant.repeatYears}">0</td>
+          <td th:text="${participant.worst} ? '未卒業' : '卒業'">卒業</td>
         </tr>
       </tbody>
     </table>
