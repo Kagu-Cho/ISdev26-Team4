@@ -56,7 +56,8 @@ class ResultControllerTest {
   @BeforeEach
   void prepareSavedState() {
     when(source.find(GAME)).thenReturn(Optional.of(state(GameStatus.FINISHED, List.of(
-        graduate(1, "学生A", false, 126, 1, 2), graduate(2, "CPU1", true, 124, 0, 1)))));
+        graduate(1, "学生A", false, 126, 1, 2), graduate(2, "CPU1", true, 124, 0, 1),
+        graduate(3, "学生B", false, 124, 0, 3), graduate(4, "CPU2", true, 124, 0, 4)))));
     when(source.find(OTHER)).thenReturn(Optional.empty());
   }
 
@@ -67,7 +68,7 @@ class ResultControllerTest {
         .andExpect(status().isOk()).andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
         .andExpect(jsonPath("$.gameId").value(GAME.toString()))
         .andExpect(jsonPath("$.status").value("FINISHED"))
-        .andExpect(jsonPath("$.players", hasSize(2)))
+        .andExpect(jsonPath("$.players", hasSize(4)))
         .andExpect(jsonPath("$.players[0].displayName").value("CPU1"))
         .andExpect(jsonPath("$.players[0].cpu").value(true))
         .andExpect(jsonPath("$.players[0].credits").value(124))
@@ -116,7 +117,7 @@ class ResultControllerTest {
 
   private GameResultState threeGraduatesAndOneUnfinished(boolean cpu, EnrollmentStatus enrollment) {
     ParticipantResult worst = new ParticipantResult(new UUID(1, 4), 4, "最後の参加者", cpu,
-        new StudentStatus(120, 2, enrollment, 0, 4));
+        new StudentStatus(120, 2, enrollment, 0, 4), true);
     return state(GameStatus.FINISHED, List.of(worst,
         graduate(1, "卒業1", false, 124, 0, 1), graduate(3, "卒業3", true, 126, 1, 3),
         graduate(2, "卒業2", false, 128, 1, 2)));
@@ -163,6 +164,25 @@ class ResultControllerTest {
   }
 
   @Test
+  @DisplayName("保存済みworstを参照し未確定のワースト判定をGETで生成しない")
+  void requiresPersistedWorstFlagAndAllFourPlayers() throws Exception {
+    GameResultState valid = threeGraduatesAndOneUnfinished(false, EnrollmentStatus.REMEDIAL);
+    ParticipantResult last = valid.players().get(0);
+    List<ParticipantResult> notConfirmed = new ArrayList<>(valid.players());
+    notConfirmed.set(0, new ParticipantResult(last.participantId(), last.playerNumber(),
+        last.displayName(), last.cpu(), last.status(), false));
+    when(source.find(GAME)).thenReturn(Optional.of(state(GameStatus.FINISHED, notConfirmed)));
+    mockMvc.perform(request(API)).andExpect(status().isConflict());
+    assertFalse(notConfirmed.get(0).worst());
+    when(source.find(GAME)).thenReturn(Optional.of(state(GameStatus.FINISHED,
+        valid.players().subList(1, 4))));
+    mockMvc.perform(request(API)).andExpect(status().isConflict());
+    when(source.find(GAME)).thenReturn(Optional.of(valid));
+    mockMvc.perform(request(API)).andExpect(status().isOk())
+        .andExpect(jsonPath("$.players[3].worst").value(true));
+  }
+
+  @Test
   @DisplayName("卒業者が2人以下の4人試合では残りをワーストとせず未確定にする")
   void doesNotPublishTwoGraduatesAndTwoUnfinishedPlayers() throws Exception {
     ParticipantResult third = new ParticipantResult(new UUID(1, 3), 3, "未卒業3", false,
@@ -179,9 +199,10 @@ class ResultControllerTest {
   @Test
   @DisplayName("AC2 保存済み順位の重複・欠番を勝手に補正せず409を返す")
   void rejectsDuplicateOrMissingRanksWithoutReorderingWinners() throws Exception {
-    for (int secondRank : new int[] {1, 3}) {
+    for (int secondRank : new int[] {1, 5}) {
       GameResultState saved = state(GameStatus.FINISHED, List.of(
-          graduate(1, "学生A", false, 124, 0, 1), graduate(2, "CPU1", true, 126, 0, secondRank)));
+          graduate(1, "学生A", false, 124, 0, 1), graduate(2, "CPU1", true, 126, 0, secondRank),
+          graduate(3, "学生B", false, 124, 0, 3), graduate(4, "CPU2", true, 124, 0, 4)));
       when(source.find(GAME)).thenReturn(Optional.of(saved));
       mockMvc.perform(request(API)).andExpect(status().isConflict());
       mockMvc.perform(request(PAGE)).andExpect(status().isConflict())
@@ -256,7 +277,8 @@ class ResultControllerTest {
   @Test
   void readsLatestStateInsteadOfOldSessionOrQueryValues() throws Exception {
     GameResultState completed = state(GameStatus.FINISHED,
-        List.of(graduate(1, "学生A", false, 124, 0, 1)));
+        List.of(graduate(1, "学生A", false, 124, 0, 1), graduate(2, "CPU1", true, 124, 0, 2),
+            graduate(3, "学生B", false, 124, 0, 3), graduate(4, "CPU2", true, 124, 0, 4)));
     when(source.find(GAME)).thenReturn(Optional.of(completed), Optional.of(state(GameStatus.PLAYING, List.of())));
     mockMvc.perform(request(API)).andExpect(status().isOk());
     mockMvc.perform(request(API).sessionAttr("resultSnapshot", completed)
@@ -292,7 +314,9 @@ class ResultControllerTest {
   @Test
   void escapesNamesAndDefensivelyCopiesSavedState() throws Exception {
     ParticipantResult participant = graduate(1, "<script>alert(1)</script>", false, 124, 0, 1);
-    List<ParticipantResult> players = new ArrayList<>(List.of(participant));
+    List<ParticipantResult> expected = List.of(participant, graduate(2, "CPU1", true, 124, 0, 2),
+        graduate(3, "学生B", false, 124, 0, 3), graduate(4, "CPU2", true, 124, 0, 4));
+    List<ParticipantResult> players = new ArrayList<>(expected);
     Set<String> users = new HashSet<>(Set.of("viewer"));
     GameResultState saved = new GameResultState(GAME, GameStatus.FINISHED, users, players);
     players.clear(); users.clear();
@@ -300,14 +324,15 @@ class ResultControllerTest {
     mockMvc.perform(request(PAGE)).andExpect(status().isOk())
         .andExpect(content().string(containsString("&lt;script&gt;")))
         .andExpect(content().string(not(containsString("<script>"))));
-    assertEquals(List.of(participant), saved.players());
+    assertEquals(expected, saved.players());
     assertEquals(Set.of("viewer"), saved.allowedUsernames());
   }
 
   @Test
   void repeatedReadsKeepRanksAndDoNotMutateSavedState() throws Exception {
     GameResultState saved = state(GameStatus.FINISHED,
-        List.of(graduate(1, "学生A", false, 124, 1, 2), graduate(2, "CPU1", true, 126, 0, 1)));
+        List.of(graduate(1, "学生A", false, 124, 1, 2), graduate(2, "CPU1", true, 126, 0, 1),
+            graduate(3, "学生B", false, 124, 0, 3), graduate(4, "CPU2", true, 124, 0, 4)));
     when(source.find(GAME)).thenReturn(Optional.of(saved));
     String first = mockMvc.perform(request(API)).andExpect(status().isOk())
         .andReturn().getResponse().getContentAsString();
