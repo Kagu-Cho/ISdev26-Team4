@@ -8,7 +8,7 @@
 | --- | --- |
 | `GameId` | ゲームを一意に識別する文字列。サーバー生成のUUID |
 | `ParticipantId` | 参加者を一意に識別する文字列。ゲーム内でサーバー生成のUUID |
-| `PlayerNumber` | 画面表示順を表す1〜4の整数。ゲーム内で重複しない |
+| `PlayerNumber` | 画面表示順を表す1〜4の整数。ゲーム内で重複しない。`FINISHED` 時の `currentPlayerNumber` だけは0 |
 | `Month` | 1以上の整数。現在のゲーム内月 |
 | `SquareId` | 1〜100の整数。盤面位置 |
 | `Credits` | 0以上の整数。単位数 |
@@ -51,6 +51,8 @@
       "circleMember": false,
       "enrollmentStatus": "ENROLLED",
       "repeatYears": 0,
+      "hasReachedGoal": false,
+      "firstGoalMonth": 0,
       "graduationRank": 0,
       "lastAssessmentMonth": 0,
       "assessmentResults": [
@@ -64,7 +66,9 @@
 
 - `currentPlayerNumber` は現在操作できる参加者を表す。
 - `lastAssessmentMonth` は最後に半期判定を確定した月で、未判定は0とする。
-- `repeatYears` は留年した回数で、卒業後は増えない。
+- `repeatYears` は単位不足で留年した半期判定の回数を表し、卒業後は増えない。
+- `hasReachedGoal` はマス100への初回到達後にtrueとなり、現在位置にかかわらず卒業判定対象であることを表す。
+- `firstGoalMonth` は初回到達月で、未到達は0とする。
 - `graduationRank` は卒業順位で、未卒業は0、卒業後は変更しない。
 - `assessmentResults` は直近半期の科目別結果を保持する。1科目の合格は2単位を表す。
 - `GameState` の入力値をクライアントが直接変更する更新APIは提供しない。
@@ -86,8 +90,8 @@
 
 - 権限: ログイン済み利用者。作成者が開始権限者になる。
 - 画面: ロビーの「ゲームを作成」操作。
-- 入力: `displayName`、`requestId`。
-- 責任: ゲームID、作成者の参加者ID、初期状態を生成する。
+- 入力: `displayName`、`requestId`。ゲーム作成は現在状態を参照しないため、`version` は不要とする。
+- 責任: ゲームID、作成者の参加者ID、初期状態を生成する。作成直後は人間参加者だけを登録し、開始時に空席をCPU参加者で埋める。
 - 応答: `201 Created` と `GameState`。初期状態は `WAITING`、月1、手番未確定。
 
 ### 4.2 参加
@@ -96,8 +100,8 @@
 
 - 権限: ログイン済みで、まだそのゲームに参加していない利用者。
 - 画面: ロビーの「参加」操作。
-- 入力: `displayName`、`requestId`。
-- 責任: 参加者IDとPlayerNumberを割り当てる。4人を超える参加は受け付けない。
+- 入力: `displayName`、`requestId`、`version`。`version` は参加前に取得したゲーム状態の値と一致しなければならない。
+- 責任: `version` 条件付き更新を同一トランザクションで行い、参加者IDとPlayerNumberを割り当てる。4人を超える参加は受け付けない。残り1席への同時参加は1件だけ成功し、他は `409 Conflict` とする。
 - 応答: `201 Created` と参加者情報、参加後の `GameState`。
 
 ### 4.3 開始
@@ -107,8 +111,10 @@
 - 権限: 作成者（開始権限者）のみ。参加者が1人以上必要。
 - 画面: ロビーの「ゲーム開始」操作。
 - 入力: `version`、`requestId`。
-- 責任: 参加順から手番順を確定し、`PLAYING` に遷移する。開始後は参加者を追加できない。
+- 責任: `version` 条件付き更新を行い、参加順を確定する。4人未満の場合は空席をCPU参加者で埋め、CPUにもPlayerNumberを割り当ててから `PLAYING` に遷移する。開始と参加が競合した場合は先にversion更新を成功させた処理だけが成功し、後続処理は `409 Conflict` とする。開始後は参加者を追加できない。
 - 応答: `200 OK` と開始後の `GameState`。
+
+CPU参加者の `participantId` はサーバー生成、`cpu` はtrue、表示名はサーバーが定めたCPU名とする。CPU参加者を人間の認証セッションへ紐付けず、CPU手番はゲーム進行サービスだけが実行する。
 
 ### 4.4 状態取得
 
@@ -123,7 +129,7 @@
 
 `POST /api/games/{gameId}/turns`
 
-- 権限: `currentPlayerNumber` に対応する本人のみ。
+- 権限: `currentPlayerNumber` に対応する人間参加者本人のみ。CPU参加者の手番にこのAPIを呼び出すことはできず、呼び出しは `403 Forbidden` とする。
 - 画面: 盤面の「勉強」「サークル」「アルバイト」のいずれか1つを選ぶ操作。
 - 入力:
 
@@ -164,6 +170,10 @@
 
 卒業済み参加者の操作、手番違い、同月の二重操作は `409 Conflict` とする。サイコロだけを振るエンドポイントは作らない。
 
+CPU手番はゲーム進行サービスが内部コマンドとして同じ処理を実行する。内部コマンドは認証済み人間の権限チェックを受けず、`cpu=true` の参加者だけを対象にする。CPUの行動選択、サイコロ、到着イベント、次の手番への遷移は1トランザクションで行い、`version` 条件付き更新に失敗した場合は再実行せず、保存済み結果または競合結果を返す。
+
+人間またはCPUの処理後に次の手番がCPUなら、ゲーム進行サービスは次の人間の手番または `FINISHED` になるまでCPU手番を連続実行する。CPU処理中に人間から月次APIを受け付けず、処理完了後の最新 `GameState` を取得できる。
+
 留年中の参加者はマス91〜100の周回区間を移動する。`movedTo` は周回後の最終マスを返し、マス100を越えてマス91へ戻った場合も `rolledNumber` は実際の出目を返す。交流マスに到着した場合は `landingEvent.type` を `交流` として結果を返す。
 
 ### 4.6 半期判定
@@ -173,7 +183,7 @@
 - 権限: ゲーム進行サービスのみ。画面利用者から直接呼び出せない。
 - 画面: 直接の操作なし。月次処理が半期末に到達したとき自動実行する。
 - 入力: `version`、`requestId`。
-- 責任: 8科目の過去問入手、科目別合否、単位加算、マス100到着者の卒業・留年判定を1回だけ行う。
+- 責任: 8科目の過去問入手、科目別合否、`hasReachedGoal=true` の参加者の卒業・留年判定を1回だけ行う。現在位置がマス100であることは追加条件にしない。
 - 応答: `200 OK` と判定後の `GameState`、科目別結果、判定済み月。
 - `lastAssessmentMonth` が同じ月の再要求は、保存済みの判定結果を返して単位を再加算しない。
 - 半期判定は、その月の全未卒業参加者の手番と到着イベントが完了した後にゲーム進行サービスが呼び出す。画面利用者は直接呼び出さない。
@@ -185,7 +195,7 @@
 - 権限: そのゲームの参加者、または開始権限者。
 - 画面: 全参加者の卒業状態が確定した後の「結果」画面。
 - 責任: 参加者ごとの表示名、単位、留年回数、卒業状態、`graduationRank` を返す。順位の計算や状態変更は行わない。
-- 応答: `200 OK`。全員の状態が確定していない場合は `409 Conflict`。
+- 応答: `200 OK`。全員の状態が確定していない場合は `409 Conflict`。全員卒業済みで `FINISHED` になった後は、結果取得を許可する。
 
 ## 5. 担当境界
 
@@ -205,7 +215,7 @@
 | 論理データ | 必須項目 |
 | --- | --- |
 | 試合状態 | `gameId`、`status`、`month`、`currentPlayerNumber`、`turnOrder`、`version` |
-| 参加者状態 | `participantId`、`playerNumber`、`squareId`、`credits`、`money`、`academic`、`connections`、`cpu`、`circleMember`、`enrollmentStatus`、`repeatYears`、`graduationRank`、`lastAssessmentMonth` |
+| 参加者状態 | `participantId`、`playerNumber`、`squareId`、`credits`、`money`、`academic`、`connections`、`cpu`、`circleMember`、`enrollmentStatus`、`repeatYears`、`hasReachedGoal`、`firstGoalMonth`、`graduationRank`、`lastAssessmentMonth` |
 | 半期結果 | `gameId`、`participantId`、判定月、科目番号、`AssessmentResult`、獲得単位 |
 | 冪等性記録 | `requestId`、認証利用者、エンドポイント、リクエスト内容の指紋、HTTPステータス、レスポンス本文、作成日時 |
 
