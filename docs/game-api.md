@@ -20,8 +20,11 @@
 | `GameStatus` | `WAITING`、`PLAYING`、`FINISHED` のいずれか |
 | `EnrollmentStatus` | `ENROLLED`、`REMEDIAL`、`GRADUATED` のいずれか |
 | `AssessmentResult` | `PENDING`、`PASSED`、`REMEDIAL` のいずれか |
+| `GraduationRank` | 0以上の整数。未卒業は0、卒業確定後は順位を保持 |
 
 金額・単位・学力・人脈は浮動小数点にしない。確率は内部計算で小数を使ってよいが、応答には判定結果を真偽値で返す。
+
+交流、過去問入手、科目合否の確率判定はサーバー内部の一様乱数で行う。画面は応答された真偽値を結果として表示し、必要なら疑似サイコロの演出を加えてよい。`rolledNumber` は移動用6面サイコロの実際の出目であり、確率判定の乱数を表すものではない。
 
 ## 2. ゲーム状態
 
@@ -44,9 +47,11 @@
       "academic": 50,
       "connections": 0,
       "money": 10000,
+      "cpu": false,
       "circleMember": false,
       "enrollmentStatus": "ENROLLED",
       "repeatYears": 0,
+      "graduationRank": 0,
       "lastAssessmentMonth": 0,
       "assessmentResults": [
         { "subjectNumber": 1, "credits": 2, "result": "PENDING" }
@@ -60,6 +65,7 @@
 - `currentPlayerNumber` は現在操作できる参加者を表す。
 - `lastAssessmentMonth` は最後に半期判定を確定した月で、未判定は0とする。
 - `repeatYears` は留年した回数で、卒業後は増えない。
+- `graduationRank` は卒業順位で、未卒業は0、卒業後は変更しない。
 - `assessmentResults` は直近半期の科目別結果を保持する。1科目の合格は2単位を表す。
 - `GameState` の入力値をクライアントが直接変更する更新APIは提供しない。
 
@@ -69,7 +75,8 @@
 - `POST` の更新要求には `version` を含める。受信値が現在値と異なる場合は `409 Conflict` とし、状態を変更しない。
 - 認証済み利用者はリクエストのセッション情報から識別する。`participantId` を本文で指定して他人になりすますことはできない。
 - 不正な形式・範囲は `400 Bad Request`、存在しないゲーム・参加者は `404 Not Found`、権限不足は `403 Forbidden`、手番違い・状態違いは `409 Conflict` とする。
-- 同じ `requestId` を再送した場合は最初の処理結果を返し、行動・サイコロ・月を二重に進めない。
+- `requestId` の再送判定を `version` 検証より先に行う。同じ利用者・同じエンドポイント・同じリクエスト内容の `requestId` が保存済みなら、`version` が古くても最初のHTTPステータスとレスポンス本文をそのまま返し、行動・サイコロ・月を二重に進めない。
+- `requestId` を別の利用者、別のエンドポイント、または異なるリクエスト内容で再利用した場合は `409 Conflict` とし、状態を変更しない。未保存の新規 `requestId` は、その後に `version` を検証し、不一致なら `409 Conflict` とする。
 
 ## 4. エンドポイント契約
 
@@ -138,6 +145,11 @@
   "rolledNumber": 1,
   "movedFrom": 1,
   "movedTo": 2,
+  "landingEvent": {
+    "type": "NONE|交流",
+    "succeeded": false,
+    "connectionsChange": 0
+  },
   "actionResult": {
     "action": "STUDY",
     "circleJoined": false,
@@ -152,6 +164,8 @@
 
 卒業済み参加者の操作、手番違い、同月の二重操作は `409 Conflict` とする。サイコロだけを振るエンドポイントは作らない。
 
+留年中の参加者はマス91〜100の周回区間を移動する。`movedTo` は周回後の最終マスを返し、マス100を越えてマス91へ戻った場合も `rolledNumber` は実際の出目を返す。交流マスに到着した場合は `landingEvent.type` を `交流` として結果を返す。
+
 ### 4.6 半期判定
 
 `POST /api/games/{gameId}/assessments`
@@ -162,6 +176,7 @@
 - 責任: 8科目の過去問入手、科目別合否、単位加算、マス100到着者の卒業・留年判定を1回だけ行う。
 - 応答: `200 OK` と判定後の `GameState`、科目別結果、判定済み月。
 - `lastAssessmentMonth` が同じ月の再要求は、保存済みの判定結果を返して単位を再加算しない。
+- 半期判定は、その月の全未卒業参加者の手番と到着イベントが完了した後にゲーム進行サービスが呼び出す。画面利用者は直接呼び出さない。
 
 ### 4.7 結果取得
 
@@ -169,7 +184,7 @@
 
 - 権限: そのゲームの参加者、または開始権限者。
 - 画面: 全参加者の卒業状態が確定した後の「結果」画面。
-- 責任: 参加者ごとの表示名、単位、留年回数、卒業状態、順位を返す。計算や状態変更は行わない。
+- 責任: 参加者ごとの表示名、単位、留年回数、卒業状態、`graduationRank` を返す。順位の計算や状態変更は行わない。
 - 応答: `200 OK`。全員の状態が確定していない場合は `409 Conflict`。
 
 ## 5. 担当境界
@@ -182,3 +197,16 @@
 | D: 卒業・結果 | マス100到着者の卒業・留年、結果データ、順位確定 | 月次行動の効果、サイコロ、開始前ロビー |
 
 複数担当が同じ状態を更新する場合は、Bの手番・`version` 制御を通し、1リクエストの中で責任範囲を越えて直接更新しない。
+
+## 6. 永続化契約と担当範囲
+
+共有仕様では、論理的に次の値を保存することを確定する。物理的なテーブル分割、SQLの方言、インデックス名は保存担当Issueで決定する。
+
+| 論理データ | 必須項目 |
+| --- | --- |
+| 試合状態 | `gameId`、`status`、`month`、`currentPlayerNumber`、`turnOrder`、`version` |
+| 参加者状態 | `participantId`、`playerNumber`、`squareId`、`credits`、`money`、`academic`、`connections`、`cpu`、`circleMember`、`enrollmentStatus`、`repeatYears`、`graduationRank`、`lastAssessmentMonth` |
+| 半期結果 | `gameId`、`participantId`、判定月、科目番号、`AssessmentResult`、獲得単位 |
+| 冪等性記録 | `requestId`、認証利用者、エンドポイント、リクエスト内容の指紋、HTTPステータス、レスポンス本文、作成日時 |
+
+保存担当Issueは上記の論理項目を欠落させず、`requestId` はゲーム状態の更新と同じトランザクションで一意に保存する。共有仕様Issueは論理契約を決め、保存担当Issueは `schema.sql` などの物理設計と実装を担当する。
