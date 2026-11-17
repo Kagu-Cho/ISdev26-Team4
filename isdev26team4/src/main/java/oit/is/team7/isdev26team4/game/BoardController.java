@@ -11,6 +11,10 @@ import org.springframework.web.bind.annotation.RequestParam;
 @Controller
 public class BoardController {
 
+  private static final int MIN_SQUARE_ID = 1;
+  private static final int MIN_PLAYER_ID = 1;
+  private static final int MAX_PLAYER_ID = 4;
+
   /**
    * マス情報データ構造
    * x, y 座標を明示的に保持し、データ構造の変更に画面・接続線が完全に連動する設計
@@ -75,18 +79,17 @@ public class BoardController {
       Model model) {
 
     List<Square> squares = createDefaultSquares();
+    int maxSquareId = squares.size();
+    int activeTurn = clamp(turnPlayer, MIN_PLAYER_ID, MAX_PLAYER_ID);
 
     List<Player> players = List.of(
-        new Player(1, "プレイヤー1", p1Pos, "#e53e3e", turnPlayer == 1),
-        new Player(2, "プレイヤー2", p2Pos, "#3182ce", turnPlayer == 2),
-        new Player(3, "プレイヤー3", p3Pos, "#38a169", turnPlayer == 3),
-        new Player(4, "プレイヤー4", p4Pos, "#d69e2e", turnPlayer == 4)
+        new Player(1, "プレイヤー1", clamp(p1Pos, MIN_SQUARE_ID, maxSquareId), "#e53e3e", activeTurn == 1),
+        new Player(2, "プレイヤー2", clamp(p2Pos, MIN_SQUARE_ID, maxSquareId), "#3182ce", activeTurn == 2),
+        new Player(3, "プレイヤー3", clamp(p3Pos, MIN_SQUARE_ID, maxSquareId), "#38a169", activeTurn == 3),
+        new Player(4, "プレイヤー4", clamp(p4Pos, MIN_SQUARE_ID, maxSquareId), "#d69e2e", activeTurn == 4)
     );
 
-    Player currentTurn = players.stream()
-        .filter(Player::isTurn)
-        .findFirst()
-        .orElse(players.get(0));
+    Player currentTurn = players.get(activeTurn - 1);
 
     // マス間を線で結ぶためのSVG用ポリライン座標文字列 ("x1,y1 x2,y2 ...")
     String trackPoints = squares.stream()
@@ -99,5 +102,9 @@ public class BoardController {
     model.addAttribute("currentTurnPlayer", currentTurn);
 
     return "game";
+  }
+
+  private static int clamp(int value, int min, int max) {
+    return Math.max(min, Math.min(max, value));
   }
 }
