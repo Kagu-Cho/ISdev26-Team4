@@ -10,12 +10,12 @@ import java.util.random.RandomGenerator;
 
 import org.junit.jupiter.api.Test;
 
-import oit.is.team7.isdev26team4.game.MovementService.EnrollmentStatus;
 import oit.is.team7.isdev26team4.game.MovementService.GameStatus;
 import oit.is.team7.isdev26team4.game.MovementService.GameTurnState;
 import oit.is.team7.isdev26team4.game.MovementService.LandingEventType;
 import oit.is.team7.isdev26team4.game.MovementService.MoveOutcome;
 import oit.is.team7.isdev26team4.game.MovementService.PlayerMoveState;
+import oit.is.team7.isdev26team4.result.GraduationService.EnrollmentStatus;
 
 class MovementServiceTest {
 
@@ -102,7 +102,7 @@ class MovementServiceTest {
     MoveOutcome stayOutcome = service.moveAndAdvanceTurn(alreadyReachedState, 1, 5);
 
     assertEquals(100, stayOutcome.movedTo());
-    assertEquals(LandingEventType.GOAL, stayOutcome.landingEventType());
+    assertEquals(LandingEventType.NONE, stayOutcome.landingEventType());
     assertTrue(stayOutcome.hasReachedGoal());
     assertEquals(21, stayOutcome.firstGoalMonth());
   }
@@ -207,6 +207,8 @@ class MovementServiceTest {
     assertThrows(IllegalArgumentException.class, () -> service.moveAndAdvanceTurn(playing, 1, 7));
     assertThrows(IllegalArgumentException.class, () -> service.moveAndAdvanceTurn(playing, 2, 3));
     assertThrows(IllegalArgumentException.class, () -> service.moveAndAdvanceTurn(null, 1, 3));
+    assertThrows(IllegalArgumentException.class,
+        () -> new GameTurnState(GameStatus.PLAYING, 1, 0, playing.players()));
 
     GameTurnState waiting = new GameTurnState(GameStatus.WAITING, 1, 1, playing.players());
     assertThrows(IllegalArgumentException.class, () -> service.moveAndAdvanceTurn(waiting, 1, 3));

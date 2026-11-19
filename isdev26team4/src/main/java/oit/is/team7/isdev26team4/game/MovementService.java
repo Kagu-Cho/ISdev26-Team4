@@ -8,6 +8,8 @@ import java.util.random.RandomGenerator;
 
 import org.springframework.stereotype.Service;
 
+import oit.is.team7.isdev26team4.result.GraduationService.EnrollmentStatus;
+
 /**
  * サイコロの出目生成と移動先・到着種別・次手番・月進行を判定する純粋計算サービス（Issue #7）。
  * 月次行動効果（#8）、過去問・科目合否（#9）、卒業・留年判定（#10）、DB保存（#11）は呼び出し側が扱う。
@@ -28,10 +30,11 @@ public class MovementService {
     WAITING, PLAYING, FINISHED
   }
 
-  public enum EnrollmentStatus {
-    ENROLLED, REMEDIAL, GRADUATED
-  }
-
+  /**
+   * 移動後の到着イベント種別。
+   * EVENT は docs/game-api.md の "交流" に対応するため、#12 のAPI応答変換時に "交流" へ変換する。
+   * GOAL は新たにマス100へ到着したとき（movedFrom != 100 かつ movedTo == 100）のみ返す。
+   */
   public enum LandingEventType {
     NONE, EVENT, GOAL
   }
@@ -89,7 +92,9 @@ public class MovementService {
           throw new IllegalArgumentException("playersに重複またはnullがあります");
         }
       }
-      if (currentPlayerNumber < 0 || currentPlayerNumber > MAX_PLAYER_NUMBER) {
+      // FINISHED 時のみ currentPlayerNumber=0 を許容し、PLAYING 時は 1〜4 に限定する
+      int minCurrent = (status == GameStatus.PLAYING) ? MIN_PLAYER_NUMBER : 0;
+      if (currentPlayerNumber < minCurrent || currentPlayerNumber > MAX_PLAYER_NUMBER) {
         throw new IllegalArgumentException("currentPlayerNumberが不正です");
       }
     }
@@ -166,7 +171,7 @@ public class MovementService {
     int firstGoalMonth = actor.hasReachedGoal()
         ? actor.firstGoalMonth()
         : (movedTo == MAX_SQUARE_ID ? state.month() : 0);
-    LandingEventType landingEventType = resolveLandingEvent(movedTo, actor.enrollmentStatus());
+    LandingEventType landingEventType = resolveLandingEvent(movedFrom, movedTo, actor.enrollmentStatus());
 
     int nextInRoundIndex = findNextActiveIndex(state.players(), actorIndex + 1, state.players().size());
     boolean roundCompleted = nextInRoundIndex < 0;
@@ -203,9 +208,9 @@ public class MovementService {
     return pos;
   }
 
-  private static LandingEventType resolveLandingEvent(int movedTo, EnrollmentStatus enrollment) {
+  private static LandingEventType resolveLandingEvent(int movedFrom, int movedTo, EnrollmentStatus enrollment) {
     if (movedTo == MAX_SQUARE_ID) {
-      return LandingEventType.GOAL;
+      return (movedFrom != MAX_SQUARE_ID) ? LandingEventType.GOAL : LandingEventType.NONE;
     }
     if (enrollment != EnrollmentStatus.REMEDIAL && isExchangeSquare(movedTo)) {
       return LandingEventType.EVENT;
