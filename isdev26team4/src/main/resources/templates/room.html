@@ -11,6 +11,10 @@
     <h1 th:text="${room.roomName}">Room(1)</h1>
     <p>参加人数: <span th:text="${room.participantCount}">0</span>人</p>
     <p>空席: <span th:text="${room.vacancyCount}">4</span>席</p>
+    <form th:action="@{/Enter/{roomNumber}/participants(roomNumber=${roomNumber})}" method="post">
+      <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+      <button type="submit">参加する</button>
+    </form>
   </main>
 </body>
 
